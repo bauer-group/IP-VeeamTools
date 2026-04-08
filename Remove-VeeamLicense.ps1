@@ -128,7 +128,7 @@
 
 .NOTES
     Author     : BAUER GROUP IT
-    Version    : 2.5
+    Version    : 1.2
     Repository : github.com/bauer-group/veeam-tools
     Lizenz     : MIT (siehe LICENSE)
     Tested on  : VBO v7.x, v8.x
