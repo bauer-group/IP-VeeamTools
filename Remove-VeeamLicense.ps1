@@ -67,22 +67,29 @@
     Scheduled Tasks oder CI/CD-Pipelines.
     Wirkt NICHT zusammen mit -WhatIf — Trockenlauf bleibt Trockenlauf.
 
+.PARAMETER PassThru
+    Gibt am Ende das strukturierte Result-Objekt an die Pipeline aus.
+    OHNE diesen Switch zeigt das Skript nur eine kompakte Status-Zeile
+    via Write-Host und liefert nichts an die Pipeline. Standardverhalten
+    ist "leise" — Automation-Workflows nutzen -PassThru für Konsum.
+
 .OUTPUTS
-    [pscustomobject] mit folgenden Feldern:
+    Standardmäßig: nichts an die Pipeline (nur kompakter Host-Output).
+
+    Mit -PassThru: [pscustomobject] mit folgenden Feldern:
 
         Email                 - bearbeitete E-Mail-Adresse
         Organization          - VBO-Organisation
         Timestamp             - Startzeitpunkt des Laufs
         UserResolved          - $true wenn User in M365-Org gefunden wurde
-        JobsCleaned           - Anzahl entfernter Job-Zuordnungen
+        JobsCleaned           - Anzahl entfernter SelectedItems
+        ExcludedItemsCleaned  - Anzahl entfernter ExcludedItems
         RepositoriesProcessed - gescannte Repositories
         RepositoriesWithData  - Repositories mit gefundenen Daten
         LicenseRemoved        - $true wenn Lizenz freigegeben wurde
         Skipped               - $true wenn -SkipDataDeletion gesetzt war
         LogFile               - voller Pfad zum Transcript
         Success               - Gesamtergebnis ($true / $false)
-
-    Die Ausgabe ist für Konsum durch andere Skripte / Pipelines gedacht.
 
 .EXAMPLE
     .\Remove-VeeamLicense.ps1 -Email 'max.mustermann@de.bauer-group.com' -WhatIf
@@ -109,18 +116,19 @@
     Gründen erhalten bleiben müssen.
 
 .EXAMPLE
-    $r = .\Remove-VeeamLicense.ps1 -Email 'user@example.com' -Force
+    $r = .\Remove-VeeamLicense.ps1 -Email 'user@example.com' -Force -PassThru
     if ($r.Success) {
         Send-MgUserMessage -UserId 'compliance@bauer-group.com' `
             -Subject "Backup-Scope-Cleanup $($r.Email) ok" `
             -Body "Log: $($r.LogFile)"
     }
 
-    Konsumieren des Result-Objekts für Audit-Trail-Versand.
+    Konsumieren des Result-Objekts für Audit-Trail-Versand. -PassThru ist
+    erforderlich, sonst gibt das Skript nichts an die Pipeline.
 
 .NOTES
     Author     : BAUER GROUP IT
-    Version    : 2.4
+    Version    : 2.5
     Repository : github.com/bauer-group/veeam-tools
     Lizenz     : MIT (siehe LICENSE)
     Tested on  : VBO v7.x, v8.x
@@ -165,7 +173,10 @@ param(
     [string]$LogPath = 'C:\ProgramData\Veeam\Backup365\Logs\LicenseCleanup',
 
     [Parameter()]
-    [switch]$Force
+    [switch]$Force,
+
+    [Parameter()]
+    [switch]$PassThru
 )
 
 $ErrorActionPreference = 'Stop'
@@ -214,16 +225,10 @@ Start-Transcript -Path $logFile -Force -WhatIf:$false | Out-Null
 $exitCode = 0
 
 try {
-    Write-Host '=== VEEAM Backup-Scope Cleanup ===' -ForegroundColor Cyan
-    Write-Host "Target  : $Email"
-    Write-Host "Org     : $OrganizationName"
-    Write-Host "Log     : $logFile"
-    Write-Host "WhatIf  : $WhatIfPreference"
-    Write-Host "Force   : $($Force.IsPresent)"
-    Write-Host ''
-    Write-Host 'Note: This script removes the user from the Veeam BACKUP scope only.' -ForegroundColor DarkGray
-    Write-Host '      The Microsoft 365 account itself is NOT modified.' -ForegroundColor DarkGray
-    Write-Host ''
+    $modeTag = if ($WhatIfPreference) { ' [WhatIf]' } else { '' }
+    Write-Host "Veeam Backup-Scope Cleanup$modeTag : $Email" -ForegroundColor Cyan
+    Write-Verbose "Organization: $OrganizationName"
+    Write-Verbose "Log file: $logFile"
 
     # ------------------------------------------------------------------------
     # 1. Veeam-Modul laden
@@ -277,17 +282,11 @@ try {
 
     if ($orgUser) {
         $result.UserResolved = $true
-        Write-Host 'Resolved M365 user:' -ForegroundColor Gray
-        Write-Host ("  DisplayName  : {0}" -f $orgUser.DisplayName) -ForegroundColor DarkGray
-        Write-Host ("  UserName     : {0}" -f $orgUser.UserName)    -ForegroundColor DarkGray
-        Write-Host ("  Type         : {0}" -f $orgUser.Type)        -ForegroundColor DarkGray
-        Write-Host ("  LocationType : {0}" -f $orgUser.LocationType) -ForegroundColor DarkGray
-        Write-Host ("  OfficeId     : {0}" -f $orgUser.OfficeId)    -ForegroundColor DarkGray
-        Write-Host ("  OnPremisesId : {0}" -f $orgUser.OnPremisesId) -ForegroundColor DarkGray
-        Write-Host ''
+        Write-Host ("  Resolved: {0} ({1}, {2})" -f $orgUser.DisplayName, $orgUser.Type, $orgUser.LocationType) -ForegroundColor DarkGray
+        Write-Verbose ("  OfficeId={0} OnPremisesId={1}" -f $orgUser.OfficeId, $orgUser.OnPremisesId)
     }
     else {
-        Write-Warning "User '$Email' not found in M365 organization. Falling back to name-based matching."
+        Write-Host "  Resolved: <not in M365 — fallback to name match>" -ForegroundColor DarkYellow
     }
 
     # ------------------------------------------------------------------------
@@ -313,7 +312,7 @@ try {
         }
         foreach ($item in $included) {
             if ($PSCmdlet.ShouldProcess($job.Name, "Remove user $Email from job")) {
-                Write-Host "Removing $Email from job '$($job.Name)'..." -ForegroundColor Yellow
+                Write-Verbose "Removing $Email from job '$($job.Name)'"
                 # Remove-VBOBackupItem implementiert SupportsShouldProcess
                 # NICHT (siehe Veeam-Doku Syntax: nur [<CommonParameters>],
                 # kein [-Confirm]). Daher KEIN -Confirm:$false anhängen,
@@ -336,7 +335,7 @@ try {
         }
         foreach ($item in $excluded) {
             if ($PSCmdlet.ShouldProcess($job.Name, "Remove excluded user $Email from job")) {
-                Write-Host "Removing excluded $Email from job '$($job.Name)'..." -ForegroundColor Yellow
+                Write-Verbose "Removing excluded $Email from job '$($job.Name)'"
                 # Remove-VBOExcludedBackupItem implementiert SupportsShouldProcess
                 # NICHT — kein -Confirm/-WhatIf in der Veeam-Doku-Syntax.
                 Remove-VBOExcludedBackupItem -Job $job -BackupItem $item
@@ -359,7 +358,7 @@ try {
 
         foreach ($repo in $repositories) {
             $result.RepositoriesProcessed++
-            Write-Host "Scanning repository '$($repo.Name)' (large S3 repos can take minutes)..." -ForegroundColor Gray
+            Write-Verbose "Scanning repository '$($repo.Name)'"
 
             # Get-VBOEntityData hat zwei distinkte Parameter-Sets:
             #   1) -Repository -Type [-Name] [-Organization]
@@ -419,21 +418,21 @@ try {
             $result.RepositoriesWithData++
             foreach ($u in $userData) {
                 if ($PSCmdlet.ShouldProcess($repo.Name, "Delete backup data for $Email")) {
-                    Write-Host "  -> Deleting data from '$($repo.Name)'..." -ForegroundColor Yellow
+                    Write-Verbose "Deleting data from '$($repo.Name)'"
                     Remove-VBOEntityData -Repository $repo -User $u `
                         -Mailbox -ArchiveMailbox -OneDrive -Sites `
                         -Confirm:$false
-                    Write-Host '  -> OK' -ForegroundColor Green
                 }
             }
         }
 
         if ($result.RepositoriesWithData -eq 0) {
-            Write-Warning "No backup data found for $Email in any repository."
+            # Kein Fehler, nur Information — Backups können legitim weg sein.
+            Write-Verbose "No backup data found in any repository for $Email"
         }
     }
     else {
-        Write-Host 'Step 4/5: SKIPPED (-SkipDataDeletion)' -ForegroundColor DarkYellow
+        Write-Verbose 'Step 4/5: SKIPPED (-SkipDataDeletion)'
     }
 
     # ------------------------------------------------------------------------
@@ -448,40 +447,51 @@ try {
     Write-Verbose 'Step 5/5: Releasing license'
     $allLicensed = Get-VBOLicensedUser -Organization $org
 
-    $licensedUser = if ($orgUser) {
+    # All-zeros GUID = "kein Wert" (kommt bei Cloud-only Usern in OnPremisesId
+    # vor). Wenn wir das nicht filtern, würde der OnPremisesId-Match ALLE
+    # Cloud-only User selectieren -> Array statt Single-Match -> Crash bei
+    # Remove-VBOLicensedUser -User $array.
+    $emptyGuid = [guid]::Empty
+
+    $licensedMatches = if ($orgUser) {
         $allLicensed | Where-Object {
-            ($orgUser.OfficeId     -and $_.OfficeId     -eq $orgUser.OfficeId) -or
-            ($orgUser.OnPremisesId -and $_.OnPremisesId -eq $orgUser.OnPremisesId)
+            ($orgUser.OfficeId     -ne $emptyGuid -and $_.OfficeId     -eq $orgUser.OfficeId) -or
+            ($orgUser.OnPremisesId -ne $emptyGuid -and $_.OnPremisesId -eq $orgUser.OnPremisesId)
         }
     }
     else {
         $allLicensed | Where-Object { $_.UserName -ieq $Email }
     }
 
+    # Defensive: bei mehrfachem Match nehmen wir den ersten und warnen.
+    $licensedUser = $licensedMatches | Select-Object -First 1
+    $matchCount   = @($licensedMatches).Count
+
+    if ($matchCount -gt 1) {
+        Write-Warning "Multiple licensed user entries matched ($matchCount). Using first: $($licensedUser.UserName)"
+    }
+
     if (-not $licensedUser) {
-        Write-Warning "No licensed user entry found for $Email (already released?)."
+        Write-Verbose "No licensed user entry found for $Email (already released?)."
     }
     else {
         if ($PSCmdlet.ShouldProcess($Email, 'Release license')) {
-            Write-Host 'Releasing license...' -ForegroundColor Yellow
             # Remove-VBOLicensedUser implementiert SupportsShouldProcess
             # NICHT — kein -Confirm/-WhatIf in der Veeam-Doku-Syntax.
             Remove-VBOLicensedUser -User $licensedUser
             $result.LicenseRemoved = $true
-            Write-Host 'License released.' -ForegroundColor Green
         }
     }
 
     $result.Success = $true
 
-    Write-Host ''
-    Write-Host "=== Cleanup completed for $Email ===" -ForegroundColor Cyan
-    Write-Host ("M365 user resolved      : {0}" -f $result.UserResolved)
-    Write-Host ("Jobs (selected) cleaned : {0}" -f $result.JobsCleaned)
-    Write-Host ("Jobs (excluded) cleaned : {0}" -f $result.ExcludedItemsCleaned)
-    Write-Host ("Repositories scanned    : {0}" -f $result.RepositoriesProcessed)
-    Write-Host ("Repositories cleaned    : {0}" -f $result.RepositoriesWithData)
-    Write-Host ("License removed         : {0}" -f $result.LicenseRemoved)
+    # Kompakte einzeilige Summary — Details via -Verbose oder im Result-Objekt
+    $licenseTag = if ($result.LicenseRemoved) { 'license=released' } else { 'license=kept' }
+    $skipTag    = if ($result.Skipped) { ' data=skipped' } else { '' }
+    Write-Host ("  Done: jobs={0}+{1} repos={2}/{3} {4}{5}" -f `
+        $result.JobsCleaned, $result.ExcludedItemsCleaned, `
+        $result.RepositoriesWithData, $result.RepositoriesProcessed, `
+        $licenseTag, $skipTag) -ForegroundColor Green
 }
 catch {
     Write-Error "Aborted: $($_.Exception.Message)"
@@ -501,8 +511,11 @@ finally {
     }
 }
 
-# Result-Objekt IMMER ausgeben — auch im Fehlerfall, damit der Caller
-# (Pipeline / Automation) den Status zuverlässig auswerten kann.
-Write-Output $result
+# Result-Objekt nur ausgeben wenn -PassThru gesetzt ist. Standardmäßig
+# bekommt der Anwender nur die kompakte Status-Zeile via Write-Host.
+# Automation-Workflows nutzen -PassThru für strukturierten Konsum.
+if ($PassThru) {
+    Write-Output $result
+}
 
 exit $exitCode

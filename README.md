@@ -517,7 +517,13 @@ Der Regex `^[^@\s]+@[^@\s]+\.[^@\s]+$` ist absichtlich konservativ. Wenn ein gü
 
 ## Changelog
 
-### v2.4 (aktuell)
+### v2.5 (aktuell)
+
+- **Bugfix:** `Remove-VBOLicensedUser -User $licensedUser` crashte mit Array, weil das OnPremisesId-Match alle Cloud-only User mit `00000000-...` als OnPremisesId selectiert hat. Fix: All-Zeros-GUID wird jetzt als "kein Wert" behandelt; zusätzlich `Select-Object -First 1` als Defensive plus Warning bei Mehrfach-Match.
+- **Output massiv reduziert:** Header und ASCII-Banner weg. User-Resolution kompakt einzeilig (Details via `-Verbose`). Repository-Scan-Status und Schritt-Marker wandern auf `Verbose`-Stream. Final-Summary in einer einzigen Zeile (`jobs=N+M repos=X/Y license=released`). "No backup data" ist jetzt Verbose, nicht Warning.
+- **Neu:** `-PassThru` Switch — standardmäßig gibt das Skript nichts an die Pipeline aus, nur Host-Output. Mit `-PassThru` zusätzlich das vollständige Result-Objekt für Automation. Verhindert Konsolen-Spam im interaktiven Gebrauch.
+
+### v2.4
 
 - **Bugfix:** `-Confirm:$false` von `Remove-VBOBackupItem`, `Remove-VBOExcludedBackupItem` und `Remove-VBOLicensedUser` entfernt — diese Cmdlets implementieren `SupportsShouldProcess` nicht (verifiziert gegen Veeam-Doku-Syntax). Ein `-Confirm:$false` führte zu `ParameterBindingException`. Nur `Remove-VBOEntityData` listet `[-Confirm]` explizit in der Doku-Syntax und behält das Argument.
 - **Verbessert:** Repository-Loop mit Zwei-Stufen-Fallback — wenn `Get-VBOEntityData -User $orgUser` "User not found in the repository" wirft (Veeam wirft Exception statt null), versucht das Skript automatisch `Get-VBOEntityData -Type User -Name $Email` als Fallback. "Not found"-Exceptions werden auf Verbose herabgestuft (kein Warning), nur unerwartete Fehler bleiben Warnings.
