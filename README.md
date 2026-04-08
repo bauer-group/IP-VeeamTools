@@ -1,7 +1,7 @@
 # Veeam Tools — Remove-VeeamLicense
 
-> **GDPR-konformes User-Offboarding für Veeam Backup for Microsoft 365 (VBO)**
-> Ein einziges PowerShell-Skript, das einen Mitarbeiter vollständig, atomar und auditierbar aus VBO entfernt.
+> **Backup-Scope-Cleanup für Veeam Backup for Microsoft 365 (VBO)**
+> Entkoppelt einen Microsoft-365-User sauber, atomar und auditierbar von der Veeam-Backup-Schiene — ohne den M365-Account selbst anzufassen.
 
 [![PowerShell 5.1+](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?logo=powershell&logoColor=white)](https://learn.microsoft.com/powershell/)
 [![Veeam VBO](https://img.shields.io/badge/Veeam%20VBO-v7%2B-00B336?logo=veeam&logoColor=white)](https://www.veeam.com/backup-microsoft-office-365.html)
@@ -11,13 +11,25 @@
 
 ## Was macht dieses Tool?
 
-`Remove-VeeamLicense.ps1` automatisiert das **vollständige Offboarding** eines Mitarbeiters aus Veeam Backup for Microsoft 365 in **einem einzigen Lauf**:
+`Remove-VeeamLicense.ps1` entfernt einen User vollständig aus dem **Backup-Scope** einer VBO-Organisation in einem einzigen Lauf:
 
-- **Entfernt** den User aus *allen* Backup-Jobs (sonst wird die Lizenz beim nächsten Job-Lauf wieder belegt)
-- **Löscht** alle Backup-Daten (Mailbox, Archive, OneDrive, SharePoint) aus *allen* Repositories — Art. 17 DSGVO ("Recht auf Löschung")
-- **Gibt** die Lizenz frei, damit sie für andere User verfügbar ist
+- **Entfernt** den User aus *allen* Backup-Jobs (sonst wird die Veeam-Lizenz beim nächsten Job-Lauf wieder belegt)
+- **Löscht** alle Backup-Daten (Mailbox, Archive, OneDrive, SharePoint) aus *allen* Repositories
+- **Gibt** die Veeam-Lizenz frei, damit sie für andere User verfügbar ist
 - **Schreibt** ein vollständiges Audit-Transcript für Compliance-Nachweise
 - **Liefert** ein strukturiertes Result-Objekt für Automation (ServiceNow, ITSM, Splunk, …)
+
+> **Wichtig:** Das Skript fasst den **Microsoft-365-Account selbst nicht an**.
+> Der User kann weiterhin existieren, sich anmelden und arbeiten — er wird lediglich aus der Veeam-Backup-Schiene entkoppelt. Die **Veeam**-Lizenz wird freigegeben, **nicht** die M365-Lizenz.
+
+### Anwendungsfälle
+
+| Szenario | Was passiert mit dem M365-Account? |
+| --- | --- |
+| **Klassisches Offboarding** — Mitarbeiter verlässt das Unternehmen | M365-Account wird separat (z. B. via Entra ID Workflow) deaktiviert |
+| **GDPR-Löschanfrage (Art. 17 DSGVO)** für aktiven Mitarbeiter | M365-Account bleibt aktiv, nur Backup-Historie wird gelöscht |
+| **Backup-Scope-Optimierung** — User wechselt in Bereich ohne Backup-Pflicht | M365-Account bleibt unverändert |
+| **Lizenz-Pool-Bereinigung** — Veeam-Lizenz für andere User freigeben | M365-Account bleibt unverändert |
 
 Ohne dieses Tool müssten Admins jeden Schritt einzeln in der VBO-Konsole abarbeiten — fehleranfällig, zeitaufwendig und ohne maschinenlesbaren Audit-Trail.
 
@@ -41,11 +53,13 @@ Ohne dieses Tool müssten Admins jeden Schritt einzeln in der VBO-Konsole abarbe
 ## Inhaltsverzeichnis
 
 - [Zweck und Hintergrund](#zweck-und-hintergrund)
+- [Was das Skript NICHT tut](#was-das-skript-nicht-tut)
 - [Voraussetzungen](#voraussetzungen)
 - [Installation](#installation)
 - [Verwendung](#verwendung)
 - [Parameter](#parameter)
 - [Ablauf](#ablauf)
+- [User-Auflösung](#user-auflösung)
 - [Output und Result-Objekt](#output-und-result-objekt)
 - [Logging und Audit-Trail](#logging-und-audit-trail)
 - [Exit-Codes](#exit-codes)
@@ -60,22 +74,42 @@ Ohne dieses Tool müssten Admins jeden Schritt einzeln in der VBO-Konsole abarbe
 
 ## Zweck und Hintergrund
 
-Beim Offboarding eines Mitarbeiters müssen in Veeam Backup for Microsoft 365 mehrere Schritte ausgeführt werden, die im VBO-UI **einzeln und in der richtigen Reihenfolge** abgearbeitet werden müssen. Wird die Reihenfolge verletzt, ist das Ergebnis fehlerhaft:
+Um einen User aus dem Veeam-Backup-Scope zu entfernen, müssen mehrere Schritte in der VBO-Konsole **einzeln und in der richtigen Reihenfolge** ausgeführt werden. Wird die Reihenfolge verletzt, ist das Ergebnis fehlerhaft:
 
 | Schritt | Wenn vergessen | Folge |
-|---|---|---|
-| User aus Backup-Jobs entfernen | Lizenz wird beim nächsten Job-Lauf erneut belegt | Lizenzpool blockiert, Compliance-Verstoß |
+| --- | --- | --- |
+| User aus Backup-Jobs entfernen | Veeam-Lizenz wird beim nächsten Job-Lauf erneut belegt | Lizenzpool blockiert |
 | Backup-Daten aus Repos löschen | Personenbezogene Daten verbleiben im Backup | DSGVO Art. 17 Verstoß, Bußgeld-Risiko |
-| Lizenz freigeben | Lizenzpool wird unnötig blockiert | Höhere Kosten, neue User können nicht aufgenommen werden |
+| Veeam-Lizenz freigeben | Lizenzpool wird unnötig blockiert | Höhere Kosten, neue User können nicht aufgenommen werden |
 
 Dieses Skript automatisiert alle drei Schritte in **einem Durchlauf** mit vollständigem Audit-Trail und garantiert die korrekte Reihenfolge.
+
+---
+
+## Was das Skript NICHT tut
+
+Klare Abgrenzung, um Missverständnisse zu vermeiden:
+
+| Aktion | Tut das Skript? |
+| --- | --- |
+| Entfernt den User aus VBO-Backup-Jobs | ja |
+| Löscht Backup-Daten aus VBO-Repositories | ja |
+| Gibt die **Veeam**-Lizenz frei | ja |
+| Löscht den Microsoft-365-Account | **NEIN** |
+| Entzieht **M365**-Lizenzen (Office, Exchange, Teams) | **NEIN** |
+| Deaktiviert den User in Entra ID / Active Directory | **NEIN** |
+| Setzt das Passwort zurück | **NEIN** |
+| Prüft Litigation Hold automatisch | **NEIN** (vor Lauf separat prüfen) |
+| Bereinigt gruppen-basierte Backup-Selections | **NEIN** (Quellgruppe in AD/Entra anpassen) |
+
+Für ein **vollständiges Offboarding** muss zusätzlich ein separater Entra-ID/AD-Workflow laufen, der den Account selbst deaktiviert.
 
 ---
 
 ## Voraussetzungen
 
 | Komponente | Anforderung |
-|---|---|
+| --- | --- |
 | **Betriebssystem** | Windows Server mit installierter VBO-Konsole |
 | **PowerShell** | 5.1 oder höher (7.x empfohlen) |
 | **Veeam-Modul** | `Veeam.Archiver.PowerShell` (wird vom Skript automatisch geladen) |
@@ -183,7 +217,7 @@ else {
 ## Parameter
 
 | Parameter | Typ | Pflicht | Default | Beschreibung |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `-Email` | `string` | **ja** | — | UPN/E-Mail des Users. Wird per Regex validiert. Aliase: `-UserPrincipalName`, `-UPN`. |
 | `-OrganizationName` | `string` | nein | `BAUER GROUP` | Name der VBO-Organisation, exakt wie in der VBO-Konsole sichtbar. |
 | `-SkipDataDeletion` | `switch` | nein | `$false` | Überspringt Schritt 4 (Datenlöschung). Job-Bereinigung und Lizenz-Freigabe laufen weiter. |
@@ -231,6 +265,48 @@ Das Skript arbeitet in fünf streng sequentiellen Schritten ab:
 
 ---
 
+## User-Auflösung
+
+Das Skript versucht **vor Schritt 3**, den User in der Microsoft-365-Organisation aufzulösen. Diese Auflösung entscheidet, mit welcher Genauigkeit Backup-Daten und Lizenz später gefunden werden:
+
+```text
+Get-VBOOrganizationUser -Organization $org -UserName $Email
+                            │
+                            ├─► User existiert in M365  ──►  Preferred Path
+                            │                                Match per OfficeId / OnPremisesId (GUID)
+                            │                                Robust gegen Display-Name-Drift
+                            │
+                            └─► User nicht gefunden     ──►  Fallback Path
+                                                             Match per Name (UPN als String)
+                                                             Best-Effort, Warnung im Log
+```
+
+### Preferred Path — User existiert in M365
+
+Wenn der User noch in der Microsoft-365-Organisation ist (auch wenn er aus dem Backup ausgeschlossen wird), bekommt das Skript ein `VBOOrganizationUser`-Objekt mit garantierten Identifiern:
+
+- `OfficeId` — die GUID des Users in Microsoft 365
+- `OnPremisesId` — die GUID aus on-premises AD (bei Hybrid)
+
+Diese GUIDs werden für das Matching auf:
+- `Get-VBOEntityData -Type User -Repository $repo -User $orgUser` (Backup-Daten)
+- `Get-VBOLicensedUser` Filter per `OfficeId`/`OnPremisesId` (Lizenz)
+
+verwendet. Vorteile: keine Casing-Probleme, keine Display-Name-Drift, kein Risiko bei Doppel-Namen.
+
+### Fallback Path — User in M365 bereits gelöscht
+
+Wenn der M365-Account schon weg ist (z. B. weil der Offboarding-Workflow ihn bereits entfernt hat), fällt das Skript auf Namens-Matching zurück:
+
+- `Get-VBOEntityData -Type User -Repository $repo -Name $Email`
+- `Get-VBOLicensedUser | Where-Object { $_.UserName -ieq $Email }`
+
+Das Skript meldet diesen Modus mit einer Warnung im Log und im Result-Objekt (`UserResolved = $false`). Im Best-Effort-Modus kann es vorkommen, dass einzelne verwaiste Backup-Daten nicht gefunden werden — in dem Fall manuell in der VBO-Konsole nachprüfen.
+
+> **Tipp:** Lass diesen Cleanup-Job **bevor** der User aus M365 gelöscht wird laufen. Dann läuft alles im Preferred Path und du bekommst die robustesten Ergebnisse.
+
+---
+
 ## Output und Result-Objekt
 
 Das Skript gibt am Ende ein `[pscustomobject]` aus, das auch im Fehlerfall verfügbar ist:
@@ -249,7 +325,7 @@ Success               : True
 ```
 
 | Feld | Bedeutung |
-|---|---|
+| --- | --- |
 | `Email` | Die bearbeitete E-Mail-Adresse |
 | `Organization` | VBO-Organisation, in der gearbeitet wurde |
 | `Timestamp` | Startzeitpunkt des Laufs |
@@ -285,7 +361,7 @@ Das Transcript enthält:
 ## Exit-Codes
 
 | Code | Bedeutung |
-|---|---|
+| --- | --- |
 | `0` | Erfolg — alle Schritte ohne Fehler durchlaufen |
 | `1` | Allgemeiner Laufzeitfehler — siehe Transcript |
 | `2` | `Veeam.Archiver.PowerShell` Modul nicht installiert |
@@ -310,7 +386,7 @@ switch ($LASTEXITCODE) {
 Das Skript verwendet `$ErrorActionPreference = 'Stop'` und bricht bei jedem unerwarteten Fehler kontrolliert ab. Verhalten im Detail:
 
 | Situation | Verhalten |
-|---|---|
+| --- | --- |
 | Veeam-Modul nicht installiert | `exit 2`, klare Fehlermeldung |
 | Organisation nicht gefunden | `exit 3`, klare Fehlermeldung |
 | Repository gesperrt durch laufenden Job | **Warnung**, dieses Repo wird übersprungen, andere laufen weiter |
@@ -387,13 +463,25 @@ Der Regex `^[^@\s]+@[^@\s]+\.[^@\s]+$` ist absichtlich konservativ. Wenn ein gü
 
 ## Changelog
 
-### v2.1 (aktuell)
+### v2.2 (aktuell)
+
+- **🐛 Bugfix:** `Remove-VBOExcludedBackupItem` benötigt Parameter `-BackupItem`, nicht `-ExcludedBackupItem` (Veeam-API-Asymmetrie)
+- **🐛 Bugfix:** Filter auf `$_.Email` bei `Get-VBOEntityData`-Ergebnissen entfernt — Property nicht in der Doku garantiert. Stattdessen nutzt das Skript jetzt den eingebauten `-User`-Parameter mit aufgelöstem `VBOOrganizationUser`-Objekt.
+- **🐛 Bugfix:** `VBOLicensedUser`-Match nutzt jetzt GUIDs (`OfficeId`/`OnPremisesId`) statt unsicherer `UserName`-Property.
+- **Neu:** Two-stage user resolution — `Get-VBOOrganizationUser` löst den User vor Schritt 3 auf, GUIDs werden für robustes Matching verwendet
+- **Neu:** Best-Effort-Fallback wenn der User in M365 bereits gelöscht wurde
+- **Neu:** `UserResolved` Feld im Result-Objekt zeigt an, welcher Pfad genutzt wurde
+- **Neu:** Reframing von "License Cleanup" zu "Backup-Scope Cleanup" — Skript fasst den M365-Account nicht an
+- **Doku:** Alle Cmdlet-Aufrufe und Property-Zugriffe gegen die offizielle Veeam-Doku verifiziert
+- **Doku:** README erweitert um "Was das Skript NICHT tut" und "User-Auflösung"
+
+### v2.1
 
 - **Neu:** Strukturiertes Result-Objekt (`[pscustomobject]`) für Automation
 - **Neu:** Differenzierte Exit-Codes (0/1/2/3) für Wrapper-Skripte
 - **Neu:** `-Force` Switch für nicht-interaktive Ausführung
-- **Neu:** Case-insensitive Email-Vergleiche (`-ieq`) — robuster gegen Casing-Drift
-- **Neu:** Try/Catch um `Get-VBOEntityData` — gesperrte Repos werden übersprungen statt das Skript abzubrechen
+- **Neu:** Case-insensitive Email-Vergleiche (`-ieq`)
+- **Neu:** Try/Catch um `Get-VBOEntityData` — gesperrte Repos werden übersprungen
 - **Neu:** `#Requires -Version 5.1` und `[OutputType([pscustomobject])]`
 - **Neu:** Aliase `-UserPrincipalName` / `-UPN` für `-Email`
 - **Verbessert:** Comment-based Help vollständig auf deutsch + Beispiele für Konsum
