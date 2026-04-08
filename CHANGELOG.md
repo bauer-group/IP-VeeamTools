@@ -1,3 +1,9 @@
+## [1.2.0](https://github.com/bauer-group/IP-VeeamTools/compare/v1.1.1...v1.2.0) (2026-04-08)
+
+### 🚀 Features
+
+* **remove-veeam-license:** added -PassThru switch and reduced output ([8710878](https://github.com/bauer-group/IP-VeeamTools/commit/8710878943619f2bc6611e1eac25a2e1f3c862bf))
+
 ## [1.1.1](https://github.com/bauer-group/IP-VeeamTools/compare/v1.1.0...v1.1.1) (2026-04-08)
 
 ### 🐛 Bug Fixes
