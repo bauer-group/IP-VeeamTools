@@ -517,7 +517,12 @@ Der Regex `^[^@\s]+@[^@\s]+\.[^@\s]+$` ist absichtlich konservativ. Wenn ein gü
 
 ## Changelog
 
-### v2.3 (aktuell)
+### v2.4 (aktuell)
+
+- **Bugfix:** `-Confirm:$false` von `Remove-VBOBackupItem`, `Remove-VBOExcludedBackupItem` und `Remove-VBOLicensedUser` entfernt — diese Cmdlets implementieren `SupportsShouldProcess` nicht (verifiziert gegen Veeam-Doku-Syntax). Ein `-Confirm:$false` führte zu `ParameterBindingException`. Nur `Remove-VBOEntityData` listet `[-Confirm]` explizit in der Doku-Syntax und behält das Argument.
+- **Verbessert:** Repository-Loop mit Zwei-Stufen-Fallback — wenn `Get-VBOEntityData -User $orgUser` "User not found in the repository" wirft (Veeam wirft Exception statt null), versucht das Skript automatisch `Get-VBOEntityData -Type User -Name $Email` als Fallback. "Not found"-Exceptions werden auf Verbose herabgestuft (kein Warning), nur unerwartete Fehler bleiben Warnings.
+
+### v2.3
 
 **Remove-VeeamLicense.ps1 v2.3:**
 

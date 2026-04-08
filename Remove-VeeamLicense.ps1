@@ -120,7 +120,7 @@
 
 .NOTES
     Author     : BAUER GROUP IT
-    Version    : 2.3
+    Version    : 2.4
     Repository : github.com/bauer-group/veeam-tools
     Lizenz     : MIT (siehe LICENSE)
     Tested on  : VBO v7.x, v8.x
@@ -314,7 +314,12 @@ try {
         foreach ($item in $included) {
             if ($PSCmdlet.ShouldProcess($job.Name, "Remove user $Email from job")) {
                 Write-Host "Removing $Email from job '$($job.Name)'..." -ForegroundColor Yellow
-                Remove-VBOBackupItem -Job $job -BackupItem $item -Confirm:$false
+                # Remove-VBOBackupItem implementiert SupportsShouldProcess
+                # NICHT (siehe Veeam-Doku Syntax: nur [<CommonParameters>],
+                # kein [-Confirm]). Daher KEIN -Confirm:$false anhängen,
+                # sonst: ParameterBindingException. Confirm-Punkt ist
+                # ausschließlich unser ShouldProcess-Aufruf darüber.
+                Remove-VBOBackupItem -Job $job -BackupItem $item
                 $result.JobsCleaned++
             }
         }
@@ -332,7 +337,9 @@ try {
         foreach ($item in $excluded) {
             if ($PSCmdlet.ShouldProcess($job.Name, "Remove excluded user $Email from job")) {
                 Write-Host "Removing excluded $Email from job '$($job.Name)'..." -ForegroundColor Yellow
-                Remove-VBOExcludedBackupItem -Job $job -BackupItem $item -Confirm:$false
+                # Remove-VBOExcludedBackupItem implementiert SupportsShouldProcess
+                # NICHT — kein -Confirm/-WhatIf in der Veeam-Doku-Syntax.
+                Remove-VBOExcludedBackupItem -Job $job -BackupItem $item
                 $result.ExcludedItemsCleaned++
             }
         }
@@ -357,27 +364,54 @@ try {
             # Get-VBOEntityData hat zwei distinkte Parameter-Sets:
             #   1) -Repository -Type [-Name] [-Organization]
             #   2) -Repository -User
-            # -Type und -User können NICHT kombiniert werden — daher
-            # wählen wir den Pfad abhängig davon, ob wir den User
-            # bereits aufgelöst haben.
+            # -Type und -User können NICHT kombiniert werden.
             #
-            # Get-VBOEntityData kann fehlschlagen, wenn das Repo gerade
-            # von einem laufenden Job gelockt ist. In dem Fall: warnen,
-            # aber andere Repos weiterverarbeiten.
+            # Strategie:
+            #   1. Wenn $orgUser aufgelöst wurde -> ByUser ParameterSet
+            #      (server-seitiger Filter über aktuelle GUIDs).
+            #   2. Wenn ByUser keine Daten findet (Veeam wirft "User not
+            #      found in the repository" als Exception, weil die
+            #      Backups z. B. historisch unter anderer ID gespeichert
+            #      sind), still fallback auf ByType-Name-Suche.
+            #   3. Wenn auch das nichts findet, akzeptieren: keine
+            #      Backup-Daten in diesem Repo für diesen User.
+            #
+            # Andere Exceptions (Repo gelockt, Auth-Fehler, etc.) werden
+            # als Warning gemeldet und das Repo wird übersprungen.
             $userData = $null
-            try {
-                if ($orgUser) {
-                    # Preferred Path: ParameterSet mit -User
+            $skipRepo = $false
+
+            if ($orgUser) {
+                try {
                     $userData = Get-VBOEntityData -Repository $repo -User $orgUser
                 }
-                else {
-                    # Fallback Path: ParameterSet mit -Type -Name
-                    $userData = Get-VBOEntityData -Repository $repo -Type User -Name $Email
+                catch {
+                    if ($_.Exception.Message -match 'User not found in the repository') {
+                        # Erwarteter Fall — fall through zum Name-Fallback
+                        Write-Verbose "ByUser filter found nothing in '$($repo.Name)'; trying name fallback"
+                    }
+                    else {
+                        Write-Warning "Skipping repository '$($repo.Name)' (ByUser): $($_.Exception.Message)"
+                        $skipRepo = $true
+                    }
                 }
             }
-            catch {
-                Write-Warning "Skipping repository '$($repo.Name)': $($_.Exception.Message)"
-                continue
+
+            if ($skipRepo) { continue }
+
+            if (-not $userData) {
+                try {
+                    $userData = Get-VBOEntityData -Repository $repo -Type User -Name $Email
+                }
+                catch {
+                    if ($_.Exception.Message -match 'not found') {
+                        Write-Verbose "ByType-Name filter found nothing in '$($repo.Name)' either"
+                    }
+                    else {
+                        Write-Warning "Skipping repository '$($repo.Name)' (ByType): $($_.Exception.Message)"
+                    }
+                    continue
+                }
             }
 
             if (-not $userData) { continue }
@@ -430,7 +464,9 @@ try {
     else {
         if ($PSCmdlet.ShouldProcess($Email, 'Release license')) {
             Write-Host 'Releasing license...' -ForegroundColor Yellow
-            Remove-VBOLicensedUser -User $licensedUser -Confirm:$false
+            # Remove-VBOLicensedUser implementiert SupportsShouldProcess
+            # NICHT — kein -Confirm/-WhatIf in der Veeam-Doku-Syntax.
+            Remove-VBOLicensedUser -User $licensedUser
             $result.LicenseRemoved = $true
             Write-Host 'License released.' -ForegroundColor Green
         }
