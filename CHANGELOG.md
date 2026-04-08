@@ -1,3 +1,9 @@
+## [1.1.0](https://github.com/bauer-group/IP-VeeamTools/compare/v1.0.1...v1.1.0) (2026-04-08)
+
+### 🚀 Features
+
+* **toolkit:** expanded Veeam toolkit with license inventory script ([b17e013](https://github.com/bauer-group/IP-VeeamTools/commit/b17e013cd0c8b36a34d398afeb46fd3209d87135))
+
 ## [1.0.1](https://github.com/bauer-group/IP-VeeamTools/compare/v1.0.0...v1.0.1) (2026-04-08)
 
 ### 🐛 Bug Fixes
