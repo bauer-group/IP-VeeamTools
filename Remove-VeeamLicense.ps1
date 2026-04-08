@@ -242,14 +242,18 @@ try {
         }
 
         # Ausgeschlossene Items (Excluded-Listen müssen ebenfalls bereinigt
-        # werden, sonst tauchen "Geister-User" in der Audit-View auf)
+        # werden, sonst tauchen "Geister-User" in der Audit-View auf).
+        # WICHTIG: Remove-VBOExcludedBackupItem erwartet -BackupItem (nicht
+        # -ExcludedBackupItem), obwohl Get-VBOExcludedBackupItem heißt. Beide
+        # Cmdlets arbeiten mit demselben Typ [VBOBackupItem], die Parameter-
+        # Namen sind jedoch asymmetrisch — Veeam-API-Quirk.
         $excluded = Get-VBOExcludedBackupItem -Job $job | Where-Object {
             $_.User -and $_.User.UserName -ieq $Email
         }
         foreach ($item in $excluded) {
             if ($PSCmdlet.ShouldProcess($job.Name, "Remove excluded user $Email from job")) {
                 Write-Host "Removing excluded $Email from job '$($job.Name)'..." -ForegroundColor Yellow
-                Remove-VBOExcludedBackupItem -Job $job -ExcludedBackupItem $item -Confirm:$false
+                Remove-VBOExcludedBackupItem -Job $job -BackupItem $item -Confirm:$false
             }
         }
     }
