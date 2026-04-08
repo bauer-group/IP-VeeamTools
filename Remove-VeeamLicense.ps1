@@ -120,7 +120,7 @@
 
 .NOTES
     Author     : BAUER GROUP IT
-    Version    : 2.2
+    Version    : 2.3
     Repository : github.com/bauer-group/veeam-tools
     Lizenz     : MIT (siehe LICENSE)
     Tested on  : VBO v7.x, v8.x
@@ -183,7 +183,8 @@ $result = [pscustomobject]@{
     Organization          = $OrganizationName
     Timestamp             = Get-Date
     UserResolved          = $false
-    JobsCleaned           = 0
+    JobsCleaned           = 0    # User aus SelectedItems entfernt
+    ExcludedItemsCleaned  = 0    # User aus ExcludedItems entfernt
     RepositoriesProcessed = 0
     RepositoriesWithData  = 0
     LicenseRemoved        = $false
@@ -205,7 +206,10 @@ $timestamp      = Get-Date -Format 'yyyyMMdd-HHmmss'
 $logFile        = Join-Path $LogPath "Remove-$sanitizedEmail-$timestamp.log"
 $result.LogFile = $logFile
 
-Start-Transcript -Path $logFile -Force | Out-Null
+# -WhatIf:$false ist hier zwingend — sonst würde Start-Transcript im
+# Trockenlauf-Modus übersprungen, und Stop-Transcript am Ende würde
+# fehlschlagen, weil keine aktive Aufzeichnung läuft.
+Start-Transcript -Path $logFile -Force -WhatIf:$false | Out-Null
 
 $exitCode = 0
 
@@ -260,7 +264,12 @@ try {
     Write-Verbose "Resolving organization user '$Email'"
     $orgUser = $null
     try {
-        $orgUser = Get-VBOOrganizationUser -Organization $org -UserName $Email -ErrorAction SilentlyContinue
+        # Defensiv: -UserName macht laut Doku-Beispiel exaktes Matching, aber
+        # falls die Implementierung mehrere Treffer liefert, filtern wir
+        # zusätzlich strikt auf exakten Match und nehmen den ersten.
+        $orgUser = Get-VBOOrganizationUser -Organization $org -UserName $Email -ErrorAction SilentlyContinue |
+            Where-Object { $_.UserName -ieq $Email } |
+            Select-Object -First 1
     }
     catch {
         Write-Verbose "Get-VBOOrganizationUser failed: $($_.Exception.Message)"
@@ -268,7 +277,14 @@ try {
 
     if ($orgUser) {
         $result.UserResolved = $true
-        Write-Host "Resolved M365 user: $($orgUser.DisplayName) (OfficeId: $($orgUser.OfficeId))" -ForegroundColor Gray
+        Write-Host 'Resolved M365 user:' -ForegroundColor Gray
+        Write-Host ("  DisplayName  : {0}" -f $orgUser.DisplayName) -ForegroundColor DarkGray
+        Write-Host ("  UserName     : {0}" -f $orgUser.UserName)    -ForegroundColor DarkGray
+        Write-Host ("  Type         : {0}" -f $orgUser.Type)        -ForegroundColor DarkGray
+        Write-Host ("  LocationType : {0}" -f $orgUser.LocationType) -ForegroundColor DarkGray
+        Write-Host ("  OfficeId     : {0}" -f $orgUser.OfficeId)    -ForegroundColor DarkGray
+        Write-Host ("  OnPremisesId : {0}" -f $orgUser.OnPremisesId) -ForegroundColor DarkGray
+        Write-Host ''
     }
     else {
         Write-Warning "User '$Email' not found in M365 organization. Falling back to name-based matching."
@@ -317,6 +333,7 @@ try {
             if ($PSCmdlet.ShouldProcess($job.Name, "Remove excluded user $Email from job")) {
                 Write-Host "Removing excluded $Email from job '$($job.Name)'..." -ForegroundColor Yellow
                 Remove-VBOExcludedBackupItem -Job $job -BackupItem $item -Confirm:$false
+                $result.ExcludedItemsCleaned++
             }
         }
     }
@@ -337,18 +354,25 @@ try {
             $result.RepositoriesProcessed++
             Write-Host "Scanning repository '$($repo.Name)' (large S3 repos can take minutes)..." -ForegroundColor Gray
 
+            # Get-VBOEntityData hat zwei distinkte Parameter-Sets:
+            #   1) -Repository -Type [-Name] [-Organization]
+            #   2) -Repository -User
+            # -Type und -User können NICHT kombiniert werden — daher
+            # wählen wir den Pfad abhängig davon, ob wir den User
+            # bereits aufgelöst haben.
+            #
             # Get-VBOEntityData kann fehlschlagen, wenn das Repo gerade
             # von einem laufenden Job gelockt ist. In dem Fall: warnen,
             # aber andere Repos weiterverarbeiten.
             $userData = $null
             try {
                 if ($orgUser) {
-                    # Bevorzugt: Filter per Org-User-Objekt (GUID-basiert)
-                    $userData = Get-VBOEntityData -Type User -Repository $repo -User $orgUser
+                    # Preferred Path: ParameterSet mit -User
+                    $userData = Get-VBOEntityData -Repository $repo -User $orgUser
                 }
                 else {
-                    # Fallback: Name-Filter (UPN als Name; Veeam-Konvention)
-                    $userData = Get-VBOEntityData -Type User -Repository $repo -Name $Email
+                    # Fallback Path: ParameterSet mit -Type -Name
+                    $userData = Get-VBOEntityData -Repository $repo -Type User -Name $Email
                 }
             }
             catch {
@@ -416,11 +440,12 @@ try {
 
     Write-Host ''
     Write-Host "=== Cleanup completed for $Email ===" -ForegroundColor Cyan
-    Write-Host ("M365 user resolved   : {0}" -f $result.UserResolved)
-    Write-Host ("Jobs cleaned         : {0}" -f $result.JobsCleaned)
-    Write-Host ("Repositories scanned : {0}" -f $result.RepositoriesProcessed)
-    Write-Host ("Repositories cleaned : {0}" -f $result.RepositoriesWithData)
-    Write-Host ("License removed      : {0}" -f $result.LicenseRemoved)
+    Write-Host ("M365 user resolved      : {0}" -f $result.UserResolved)
+    Write-Host ("Jobs (selected) cleaned : {0}" -f $result.JobsCleaned)
+    Write-Host ("Jobs (excluded) cleaned : {0}" -f $result.ExcludedItemsCleaned)
+    Write-Host ("Repositories scanned    : {0}" -f $result.RepositoriesProcessed)
+    Write-Host ("Repositories cleaned    : {0}" -f $result.RepositoriesWithData)
+    Write-Host ("License removed         : {0}" -f $result.LicenseRemoved)
 }
 catch {
     Write-Error "Aborted: $($_.Exception.Message)"
@@ -428,7 +453,16 @@ catch {
     if ($exitCode -eq 0) { $exitCode = 1 }
 }
 finally {
-    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
+    # -WhatIf:$false damit Stop-Transcript auch im Trockenlauf läuft.
+    # Try/catch zusätzlich, falls Start-Transcript aus anderen Gründen
+    # nie aktiv geworden ist (sonst wirft Stop-Transcript trotz
+    # SilentlyContinue eine Exception).
+    try {
+        Stop-Transcript -WhatIf:$false -ErrorAction SilentlyContinue | Out-Null
+    }
+    catch {
+        # Ignorieren — kein aktives Transcript
+    }
 }
 
 # Result-Objekt IMMER ausgeben — auch im Fehlerfall, damit der Caller

@@ -1,7 +1,7 @@
-# Veeam Tools — Remove-VeeamLicense
+# Veeam Tools
 
-> **Backup-Scope-Cleanup für Veeam Backup for Microsoft 365 (VBO)**
-> Entkoppelt einen Microsoft-365-User sauber, atomar und auditierbar von der Veeam-Backup-Schiene — ohne den M365-Account selbst anzufassen.
+> **PowerShell-Toolkit für Veeam Backup for Microsoft 365 (VBO)**
+> Listing, Auditierung und sauberes Backup-Scope-Cleanup für M365-User — ohne die M365-Accounts selbst anzufassen.
 
 [![PowerShell 5.1+](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?logo=powershell&logoColor=white)](https://learn.microsoft.com/powershell/)
 [![Veeam VBO](https://img.shields.io/badge/Veeam%20VBO-v7%2B-00B336?logo=veeam&logoColor=white)](https://www.veeam.com/backup-microsoft-office-365.html)
@@ -9,9 +9,95 @@
 
 ---
 
-## Was macht dieses Tool?
+## Übersicht
 
-`Remove-VeeamLicense.ps1` entfernt einen User vollständig aus dem **Backup-Scope** einer VBO-Organisation in einem einzigen Lauf:
+| Skript | Zweck | Wirkt destruktiv? |
+| --- | --- | --- |
+| [`Get-VeeamLicenseUsage.ps1`](Get-VeeamLicenseUsage.ps1) | Listet alle lizenzierten User mit Backup-Status, Job-Mitgliedschaften und Stale-Days | nein (read-only) |
+| [`Remove-VeeamLicense.ps1`](Remove-VeeamLicense.ps1) | Entfernt einen User vollständig aus dem Veeam-Backup-Scope und gibt die Lizenz frei | **ja** |
+
+**Empfohlener Workflow:**
+
+1. **`Get-VeeamLicenseUsage.ps1`** ausführen, um Cleanup-Kandidaten zu identifizieren (Stale-User, Exceeded-Lizenzen, etc.)
+2. Liste manuell sichten — vor allem Litigation Hold und gesetzliche Aufbewahrungsfristen prüfen
+3. **`Remove-VeeamLicense.ps1 -WhatIf`** für jeden Kandidaten testen
+4. Echten Cleanup-Lauf durchführen
+
+---
+
+## Get-VeeamLicenseUsage.ps1 — Lizenz-Inventur
+
+Read-only Inventur der lizenzierten User einer VBO-Organisation. Beantwortet die Frage: **"Welche User belegen unsere Veeam-Lizenzen, und welche sollten weg?"**
+
+### Quick Start
+
+```powershell
+# Alle lizenzierten User listen
+.\Get-VeeamLicenseUsage.ps1
+
+# User finden, die seit 90+ Tagen nicht mehr gesichert wurden (Cleanup-Kandidaten)
+.\Get-VeeamLicenseUsage.ps1 -NotBackedUpForDays 90 |
+    Format-Table UserName, LicenseStatus, LastBackupDate, DaysSinceLastBackup
+
+# Nur User mit überschüssiger Lizenz (Pool exceeded)
+.\Get-VeeamLicenseUsage.ps1 -LicenseStatus Exceeded
+
+# Vollständiger Audit-Report inkl. Job-Mitgliedschaften, als CSV
+.\Get-VeeamLicenseUsage.ps1 -IncludeJobAssignments `
+    -ExportCsv 'C:\reports\veeam-license-audit.csv'
+```
+
+### Parameter
+
+| Parameter | Typ | Default | Beschreibung |
+| --- | --- | --- | --- |
+| `-OrganizationName` | `string` | `BAUER GROUP` | Name der VBO-Organisation |
+| `-NotBackedUpForDays` | `int` | `0` | Filter: nur User mit Backup-Alter ≥ N Tagen (oder nie gesichert) |
+| `-LicenseStatus` | `string` | `All` | Filter: `All`, `Licensed`, `New`, `TemporaryAssigned`, `Exceeded` |
+| `-IncludeJobAssignments` | `switch` | `$false` | Erweitert um Job-Mitgliedschaften pro User |
+| `-ExportCsv` | `string` | — | CSV-Ausgabepfad (UTF-8) |
+
+### Output-Felder
+
+```text
+UserName            : max.mustermann@de.bauer-group.com
+LicenseStatus       : Licensed
+IsBackedUp          : True
+LastBackupDate      : 2026-01-15 03:14:22
+DaysSinceLastBackup : 83
+OfficeId            : abb37d72-9772-4e8d-b169-69f0db19d1c1
+OnPremisesId        : 00000000-0000-0000-0000-000000000000
+OrganizationName    : BAUER GROUP
+JobNames            : Daily-Mailbox; Daily-OneDrive
+```
+
+### Pipeline-Workflow für Cleanup
+
+```powershell
+# 1. Stale-User identifizieren
+$candidates = .\Get-VeeamLicenseUsage.ps1 -NotBackedUpForDays 180
+
+# 2. Sichten
+$candidates | Format-Table UserName, LicenseStatus, LastBackupDate, DaysSinceLastBackup
+
+# 3. Trockenlauf für jeden Kandidaten
+$candidates | ForEach-Object {
+    .\Remove-VeeamLicense.ps1 -Email $_.UserName -WhatIf
+}
+
+# 4. Nach Sichtung: echter Lauf (manuell pro User oder automatisiert)
+$candidates | ForEach-Object {
+    .\Remove-VeeamLicense.ps1 -Email $_.UserName -Force
+}
+```
+
+> **Sicherheit:** Das Skript schreibt **nichts** in Veeam zurück. Es ist sicher zur Ausführung in Produktion und parallel zu Backup-Jobs.
+
+---
+
+## Remove-VeeamLicense.ps1 — Backup-Scope-Cleanup
+
+Entfernt einen User vollständig aus dem **Backup-Scope** einer VBO-Organisation in einem einzigen Lauf:
 
 - **Entfernt** den User aus *allen* Backup-Jobs (sonst wird die Veeam-Lizenz beim nächsten Job-Lauf wieder belegt)
 - **Löscht** alle Backup-Daten (Mailbox, Archive, OneDrive, SharePoint) aus *allen* Repositories
@@ -32,43 +118,6 @@
 | **Lizenz-Pool-Bereinigung** — Veeam-Lizenz für andere User freigeben | M365-Account bleibt unverändert |
 
 Ohne dieses Tool müssten Admins jeden Schritt einzeln in der VBO-Konsole abarbeiten — fehleranfällig, zeitaufwendig und ohne maschinenlesbaren Audit-Trail.
-
----
-
-## Quick Start
-
-```powershell
-# 1. Trockenlauf — IMMER zuerst
-.\Remove-VeeamLicense.ps1 -Email 'max.mustermann@de.bauer-group.com' -WhatIf
-
-# 2. Echter Lauf, mit Bestätigung
-.\Remove-VeeamLicense.ps1 -Email 'max.mustermann@de.bauer-group.com'
-
-# 3. Nicht-interaktiv (z. B. aus ServiceNow)
-.\Remove-VeeamLicense.ps1 -Email 'max.mustermann@de.bauer-group.com' -Force
-```
-
----
-
-## Inhaltsverzeichnis
-
-- [Zweck und Hintergrund](#zweck-und-hintergrund)
-- [Was das Skript NICHT tut](#was-das-skript-nicht-tut)
-- [Voraussetzungen](#voraussetzungen)
-- [Installation](#installation)
-- [Verwendung](#verwendung)
-- [Parameter](#parameter)
-- [Ablauf](#ablauf)
-- [User-Auflösung](#user-auflösung)
-- [Output und Result-Objekt](#output-und-result-objekt)
-- [Logging und Audit-Trail](#logging-und-audit-trail)
-- [Exit-Codes](#exit-codes)
-- [Fehlerbehandlung](#fehlerbehandlung)
-- [Troubleshooting](#troubleshooting)
-- [Sicherheitshinweise](#sicherheitshinweise)
-- [Bekannte Einschränkungen](#bekannte-einschränkungen)
-- [Changelog](#changelog)
-- [Lizenz und Kontakt](#lizenz-und-kontakt)
 
 ---
 
@@ -214,7 +263,7 @@ else {
 
 ---
 
-## Parameter
+## Parameter-Referenz (Remove-VeeamLicense)
 
 | Parameter | Typ | Pflicht | Default | Beschreibung |
 | --- | --- | --- | --- | --- |
@@ -288,17 +337,18 @@ Wenn der User noch in der Microsoft-365-Organisation ist (auch wenn er aus dem B
 - `OfficeId` — die GUID des Users in Microsoft 365
 - `OnPremisesId` — die GUID aus on-premises AD (bei Hybrid)
 
-Diese GUIDs werden für das Matching auf:
-- `Get-VBOEntityData -Type User -Repository $repo -User $orgUser` (Backup-Daten)
+Diese GUIDs werden für das Matching auf folgende Cmdlets verwendet:
+
+- `Get-VBOEntityData -Repository $repo -User $orgUser` (Backup-Daten, ParameterSet ByUser)
 - `Get-VBOLicensedUser` Filter per `OfficeId`/`OnPremisesId` (Lizenz)
 
-verwendet. Vorteile: keine Casing-Probleme, keine Display-Name-Drift, kein Risiko bei Doppel-Namen.
+Vorteile: keine Casing-Probleme, keine Display-Name-Drift, kein Risiko bei Doppel-Namen.
 
 ### Fallback Path — User in M365 bereits gelöscht
 
 Wenn der M365-Account schon weg ist (z. B. weil der Offboarding-Workflow ihn bereits entfernt hat), fällt das Skript auf Namens-Matching zurück:
 
-- `Get-VBOEntityData -Type User -Repository $repo -Name $Email`
+- `Get-VBOEntityData -Repository $repo -Type User -Name $Email` (ParameterSet ByType)
 - `Get-VBOLicensedUser | Where-Object { $_.UserName -ieq $Email }`
 
 Das Skript meldet diesen Modus mit einer Warnung im Log und im Result-Objekt (`UserResolved = $false`). Im Best-Effort-Modus kann es vorkommen, dass einzelne verwaiste Backup-Daten nicht gefunden werden — in dem Fall manuell in der VBO-Konsole nachprüfen.
@@ -315,7 +365,9 @@ Das Skript gibt am Ende ein `[pscustomobject]` aus, das auch im Fehlerfall verf�
 Email                 : max.mustermann@de.bauer-group.com
 Organization          : BAUER GROUP
 Timestamp             : 08.04.2026 14:23:17
+UserResolved          : True
 JobsCleaned           : 3
+ExcludedItemsCleaned  : 1
 RepositoriesProcessed : 7
 RepositoriesWithData  : 2
 LicenseRemoved        : True
@@ -329,7 +381,9 @@ Success               : True
 | `Email` | Die bearbeitete E-Mail-Adresse |
 | `Organization` | VBO-Organisation, in der gearbeitet wurde |
 | `Timestamp` | Startzeitpunkt des Laufs |
-| `JobsCleaned` | Anzahl entfernter User-Zuordnungen aus Backup-Jobs |
+| `UserResolved` | `$true` wenn der User in M365 aufgelöst wurde (Preferred Path) |
+| `JobsCleaned` | Anzahl entfernter User-Zuordnungen aus SelectedItems der Backup-Jobs |
+| `ExcludedItemsCleaned` | Anzahl entfernter User-Zuordnungen aus ExcludedItems der Backup-Jobs |
 | `RepositoriesProcessed` | Anzahl gescannter Repositories |
 | `RepositoriesWithData` | Anzahl Repositories, in denen tatsächlich Daten gefunden wurden |
 | `LicenseRemoved` | `$true` wenn die Lizenz freigegeben wurde |
@@ -463,11 +517,28 @@ Der Regex `^[^@\s]+@[^@\s]+\.[^@\s]+$` ist absichtlich konservativ. Wenn ein gü
 
 ## Changelog
 
-### v2.2 (aktuell)
+### v2.3 (aktuell)
 
-- **🐛 Bugfix:** `Remove-VBOExcludedBackupItem` benötigt Parameter `-BackupItem`, nicht `-ExcludedBackupItem` (Veeam-API-Asymmetrie)
-- **🐛 Bugfix:** Filter auf `$_.Email` bei `Get-VBOEntityData`-Ergebnissen entfernt — Property nicht in der Doku garantiert. Stattdessen nutzt das Skript jetzt den eingebauten `-User`-Parameter mit aufgelöstem `VBOOrganizationUser`-Objekt.
-- **🐛 Bugfix:** `VBOLicensedUser`-Match nutzt jetzt GUIDs (`OfficeId`/`OnPremisesId`) statt unsicherer `UserName`-Property.
+**Remove-VeeamLicense.ps1 v2.3:**
+
+- **Bugfix:** `Get-VBOEntityData` ParameterSet-Konflikt — `-Type` und `-User` sind in **unterschiedlichen** Parameter-Sets und können nicht kombiniert werden (verifiziert gegen Veeam-Doku). Skript wählt jetzt den passenden ParameterSet abhängig davon, ob der User aufgelöst werden konnte.
+- **Bugfix:** `Start-Transcript` respektiert `WhatIfPreference` → wurde im `-WhatIf`-Modus übersprungen → `Stop-Transcript` warf Fehler. Fix: `-WhatIf:$false` explizit, plus `try/catch` als Sicherheitsnetz.
+- **Neu:** Defensive `Where-Object`-Filterung nach `Get-VBOOrganizationUser`, um gegen mögliche Fuzzy-Matching-Verhalten abzusichern.
+- **Neu:** Erweiterte User-Resolution-Ausgabe — zeigt jetzt DisplayName, UserName, Type, LocationType, OfficeId, OnPremisesId zur Verifikation.
+- **Neu:** `ExcludedItemsCleaned` Counter im Result-Objekt — Excluded-Items werden separat von SelectedItems gezählt.
+
+**Get-VeeamLicenseUsage.ps1 v1.0 (NEU):**
+
+- Read-only Lizenz-Inventur-Skript
+- Filter: `-NotBackedUpForDays`, `-LicenseStatus`, `-IncludeJobAssignments`
+- CSV-Export via `-ExportCsv`
+- Optimierter Job-Membership-Cache (O(J) statt O(U*J))
+
+### v2.2
+
+- **Bugfix:** `Remove-VBOExcludedBackupItem` benötigt Parameter `-BackupItem`, nicht `-ExcludedBackupItem` (Veeam-API-Asymmetrie)
+- **Bugfix:** Filter auf `$_.Email` bei `Get-VBOEntityData`-Ergebnissen entfernt — Property nicht in der Doku garantiert. Stattdessen nutzt das Skript jetzt den eingebauten `-User`-Parameter mit aufgelöstem `VBOOrganizationUser`-Objekt.
+- **Bugfix:** `VBOLicensedUser`-Match nutzt jetzt GUIDs (`OfficeId`/`OnPremisesId`) statt unsicherer `UserName`-Property.
 - **Neu:** Two-stage user resolution — `Get-VBOOrganizationUser` löst den User vor Schritt 3 auf, GUIDs werden für robustes Matching verwendet
 - **Neu:** Best-Effort-Fallback wenn der User in M365 bereits gelöscht wurde
 - **Neu:** `UserResolved` Feld im Result-Objekt zeigt an, welcher Pfad genutzt wurde
