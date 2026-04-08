@@ -470,7 +470,7 @@ Stop-VBOJob -Job (Get-VBOJob -Name 'Jobname')
 
 ### `Get-VBOEntityData` läuft sehr lange
 
-Bei großen S3-Backends (z. B. `backup-cloud.eu-north1.s3.bauer-group.com`) kann die Iteration mehrere Minuten pro Repository dauern, weil die Objekt-Metadaten remote abgerufen werden. **Das ist normal — nicht abbrechen.** Mit `-Verbose` bekommst du Step-Marker, die zeigen, dass das Skript noch arbeitet.
+Bei großen S3-Backends kann die Iteration mehrere Minuten pro Repository dauern, weil die Objekt-Metadaten remote abgerufen werden. **Das ist normal — nicht abbrechen.** Mit `-Verbose` bekommst du Step-Marker, die zeigen, dass das Skript noch arbeitet.
 
 ### Lizenz wird nach Skript-Lauf wieder belegt
 
