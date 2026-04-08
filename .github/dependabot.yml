@@ -1,0 +1,45 @@
+# =============================================================================
+# Dependabot Configuration
+# =============================================================================
+# Managed ecosystems:
+#   - github-actions : workflow action pins in .github/workflows
+#
+# NOTE on PowerShell:
+#   Dependabot does NOT support PowerShell / PSGallery modules natively.
+#   Supported ecosystems are documented here:
+#   https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file#package-ecosystem
+#
+#   To track PowerShell module updates (e.g. Veeam.Backup.PowerShell helpers,
+#   Pester, PSScriptAnalyzer) use one of:
+#     1. Renovate Bot  -> "powershell" manager (PSGallery aware)
+#     2. A custom GitHub Actions workflow running `Update-Module` + `gh pr create`
+# =============================================================================
+
+version: 2
+updates:
+  # ---------------------------------------------------------------------------
+  # GitHub Actions - workflow action version pins
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+      time: "06:30"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "dependabot"
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
+    groups:
+      actions-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # Internal BAUER GROUP actions are pinned to @main by policy
+      - dependency-name: "bauer-group/*"
