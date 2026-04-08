@@ -1,3 +1,9 @@
+## [1.1.1](https://github.com/bauer-group/IP-VeeamTools/compare/v1.1.0...v1.1.1) (2026-04-08)
+
+### 🐛 Bug Fixes
+
+* **veeam:** fixed unsupported -Confirm parameters ([81495fa](https://github.com/bauer-group/IP-VeeamTools/commit/81495fa0bd49aad95a2a4cad81b83a65ba906458))
+
 ## [1.1.0](https://github.com/bauer-group/IP-VeeamTools/compare/v1.0.1...v1.1.0) (2026-04-08)
 
 ### 🚀 Features
