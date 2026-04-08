@@ -519,7 +519,7 @@ Der Regex `^[^@\s]+@[^@\s]+\.[^@\s]+$` ist absichtlich konservativ. Wenn ein gü
 
 Lizenz: **MIT** — siehe [LICENSE](LICENSE).
 
-**BAUER GROUP GmbH & Co. KG**
+**BAUER GROUP**
 IT-Infrastruktur / VBO-Administration
 
-Bei Fragen oder Problemen: internes Ticket-System.
+Bei Fragen oder Problemen: Ticket-System.
