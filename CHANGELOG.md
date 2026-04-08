@@ -1,3 +1,9 @@
+## [1.0.1](https://github.com/bauer-group/IP-VeeamTools/compare/v1.0.0...v1.0.1) (2026-04-08)
+
+### 🐛 Bug Fixes
+
+* **veeam:** fixed VBOExcludedBackupItem parameter name ([c3a1c8a](https://github.com/bauer-group/IP-VeeamTools/commit/c3a1c8ae2353dcc81fc3ef940ca032683a9f863a))
+
 ## 1.0.0 (2026-04-08)
 
 ### 🚀 Features
